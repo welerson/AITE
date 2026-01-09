@@ -1,26 +1,37 @@
 
-# Controle AITe - Guia de Auditoria e Teste
+# Controle AITe - Guia de Auditoria e Integração
 
-Este aplicativo simula um sistema de telemetria Android para auditoria de produtividade e conformidade na fiscalização de trânsito.
+## ⚠️ CORREÇÃO DE ERRO COMUM (FIREBASE RULES)
 
-## 1. Funcionamento Automático (Diferencial)
-Diferente de sistemas manuais, este app foi projetado para ser **passivo**:
-- **Sem Intervenção**: O agente não precisa clicar em botões toda vez que for multar.
-- **Background Listener**: O app utiliza APIs de acessibilidade ou estatísticas de uso do Android para detectar quando o pacote `br.gov.exemplo.aite` entra em primeiro plano.
-- **Coleta Invisível**: O tempo de uso é cronometrado de forma transparente, garantindo que o dado seja fidedigno à realidade operacional.
+Se você viu um erro de `Unexpected '{'` na aba **Regras (Rules)** do Firebase, é porque você tentou colar código JavaScript lá. 
 
-## 2. Permissões Requeridas no Android Real
-Para que a automação funcione em um dispositivo físico:
-- **`android.permission.PACKAGE_USAGE_STATS`**: Essencial para o app "saber" quais outros apps estão sendo abertos.
-- **Exclusão de Otimização de Bateria**: Necessário para que o Android não "mate" o processo de auditoria durante o dia.
+### O que fazer na aba Regras:
+Apague tudo e cole apenas isto:
+```javascript
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if true;
+    }
+  }
+}
+```
 
-## 3. Heurísticas de Auditoria (Cruzamento de Dados)
-O sistema compara o que o agente **declarou** com o que o sistema **detectou**:
-- **Inconsistência de Tempo**: Declarar 10 multas tendo usado o app AITe por apenas 1 minuto (lavratura manual/bloco papel sendo passada para o digital em lote).
-- **Falta de Telemetria**: Declarar multas sem que o sistema tenha detectado a abertura do app AITe (uso de dispositivos de terceiros ou fraude).
+### Onde colocar o seu código de configuração:
+O código que contém `apiKey`, `projectId` e os `import { initializeApp }` deve ficar dentro do seu arquivo **App.tsx**, logo no início.
 
-## 4. Como Testar esta Simulação
-1. Inicie como **Agente**.
-2. Clique em **Começar Agora**.
-3. **Observe a Tela**: O sistema irá detectar automaticamente períodos de uso (simulando a troca de apps pelo agente). Os números de "Tempo" e "Acessos" subirão sem você clicar em nada.
-4. Finalize o expediente e insira um número alto de multas (ex: 50) para ver o sistema gerar alertas de inconsistência no painel do gestor.
+---
+
+## 🚀 Estrutura do Banco Cloud Firestore
+
+Para que o sistema funcione 100%, seu banco deve seguir esta hierarquia automática:
+
+- **Coleção `turnos`**: Documentos criados a cada início de jornada.
+  - Campos: `userId`, `userName`, `startTime`, `metrics`, `sessions`.
+  - O campo `sessions` é um array que registra cada entrada e saída do app monitorado.
+
+## 🛠️ Detalhes da Telemetria
+O aplicativo utiliza uma trava lógica de **1.5 segundos** para evitar contagens duplicadas causadas por oscilações do sistema Android (o erro de "marcar 3 acessos quando abriu apenas 2"). 
+
+Sessões de uso menores que **2 segundos** são descartadas automaticamente por serem consideradas "ruídos" ou aberturas acidentais.
