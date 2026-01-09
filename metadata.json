@@ -1,0 +1,5 @@
+{
+  "name": "Controle AITe - Auditoria Operacional",
+  "description": "Aplicativo de telemetria e controle administrativo para monitoramento de uso do app AITe, com dashboards de auditoria e cruzamento de dados para gestores.",
+  "requestFramePermissions": []
+}
