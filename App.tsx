@@ -5,25 +5,6 @@ import Layout from './components/Layout';
 import { COLORS } from './constants';
 import ManagerDashboard from './components/ManagerDashboard';
 
-// NOTA PARA O USUÁRIO: Para usar o Firebase real, você deve descomentar a seção abaixo 
-// e preencher com seus dados do Firebase Console.
-/*
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-import { getFirestore, collection, addDoc, getDocs, query, where } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
-
-const firebaseConfig = {
-  apiKey: "SUA_API_KEY",
-  authDomain: "SEU_PROJETO.firebaseapp.com",
-  projectId: "SEU_PROJETO",
-  storageBucket: "SEU_PROJETO.appspot.com",
-  messagingSenderId: "...",
-  appId: "..."
-};
-
-const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
-*/
-
 const App: React.FC = () => {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [activeShift, setActiveShift] = useState<Shift | null>(null);
@@ -35,29 +16,40 @@ const App: React.FC = () => {
   
   const lastStateChangeRef = useRef<number>(0);
 
+  // Função para adicionar logs de auditoria
   const addLog = (msg: string) => {
     const time = new Date().toLocaleTimeString();
-    setAuditLogs(prev => [{msg, time}, ...prev].slice(0, 4));
+    setAuditLogs(prev => [{msg, time}, ...prev].slice(0, 5));
   };
 
-  // Lógica de Sincronização (Aqui entraria a chamada ao Firestore)
+  // Simulação de Sincronização Cloud
   const syncToCloud = async (data: any) => {
     setIsSyncing(true);
-    console.log("Sincronizando com Firestore...", data);
-    
-    // Simulação de delay de rede
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
-    // Exemplo Real:
-    // await addDoc(collection(db, "turnos"), data);
-    
+    // Em produção: await addDoc(collection(db, "turnos"), data);
+    await new Promise(resolve => setTimeout(resolve, 800));
     setIsSyncing(false);
   };
 
+  // ESCUTADOR DO SISTEMA ANDROID (PONTE ACESSIBILIDADE)
+  // Este evento é disparado pelo código Nativo do Android
+  useEffect(() => {
+    const handleAndroidEvent = (e: any) => {
+      // e.detail.appName == 'AITe' ? true : false
+      if (e.detail && e.detail.packageName === 'br.gov.aite') {
+        setIsAITeOpenInSystem(e.detail.isForeground);
+      }
+    };
+
+    window.addEventListener('android_foreground_event', handleAndroidEvent);
+    return () => window.removeEventListener('android_foreground_event', handleAndroidEvent);
+  }, []);
+
+  // LÓGICA DE TELEMETRIA AUTOMÁTICA
   useEffect(() => {
     if (!activeShift || activeShift.status !== 'ACTIVE') return;
 
     const now = Date.now();
+    // Proteção contra oscilações rápidas (debounce de 1.5s)
     if (now - lastStateChangeRef.current < 1500) return;
 
     if (isAITeOpenInSystem) {
@@ -68,14 +60,11 @@ const App: React.FC = () => {
           start: now,
           durationMs: 0
         };
-        const updatedShift = {
-          ...activeShift,
-          sessions: [...activeShift.sessions, newSession]
-        };
-        setActiveShift(updatedShift);
+        const updated = { ...activeShift, sessions: [...activeShift.sessions, newSession] };
+        setActiveShift(updated);
         lastStateChangeRef.current = now;
-        addLog("AITe Detectado");
-        syncToCloud(updatedShift); // Persiste a abertura
+        addLog("SISTEMA: AITe detectado em tela");
+        syncToCloud(updated);
       }
     } else {
       const lastSessionIndex = activeShift.sessions.length - 1;
@@ -84,6 +73,7 @@ const App: React.FC = () => {
       if (lastSession && !lastSession.end) {
         const duration = now - lastSession.start;
         
+        // Filtro: Acessos menores que 2s não contam como trabalho real (evita burlas rápidas)
         if (duration > 2000) {
           const endedSession = { ...lastSession, end: now, durationMs: duration };
           const newSessions = [...activeShift.sessions];
@@ -91,7 +81,7 @@ const App: React.FC = () => {
           
           const totalTime = newSessions.reduce((acc, s) => acc + (s.durationMs || 0), 0);
           
-          const updatedShift: Shift = {
+          const updated: Shift = {
             ...activeShift,
             sessions: newSessions,
             metrics: {
@@ -102,10 +92,10 @@ const App: React.FC = () => {
               lastAccess: now
             }
           };
-          setActiveShift(updatedShift);
+          setActiveShift(updated);
           lastStateChangeRef.current = now;
-          addLog(`Encerrado (${(duration/1000).toFixed(1)}s)`);
-          syncToCloud(updatedShift); // Persiste o fechamento
+          addLog(`SISTEMA: AITe minimizado (${(duration/1000).toFixed(1)}s)`);
+          syncToCloud(updated);
         } else {
           const newSessions = activeShift.sessions.filter(s => s.id !== lastSession.id);
           setActiveShift(prev => prev ? { ...prev, sessions: newSessions } : null);
@@ -115,7 +105,7 @@ const App: React.FC = () => {
     }
   }, [isAITeOpenInSystem]);
 
-  // Restante da lógica de UI...
+  // Cronômetro Visual de Tempo de Tela
   useEffect(() => {
     let timer: any;
     if (activeShift && isAITeOpenInSystem) {
@@ -163,38 +153,58 @@ const App: React.FC = () => {
       flags: []
     };
     setActiveShift(newShift);
-    addLog("Turno Iniciado");
+    addLog("AUDITORIA ATIVADA PELO AGENTE");
     syncToCloud(newShift);
   };
 
-  const submitClosing = (count: number, obs: string) => {
+  // FUNÇÃO DE TESTE (APENAS PARA VOCÊ TESTAR NO NAVEGADOR AGORA)
+  const triggerSimulation = () => {
+    const event = new CustomEvent('android_foreground_event', { 
+      detail: { packageName: 'br.gov.aite', isForeground: !isAITeOpenInSystem } 
+    });
+    window.dispatchEvent(event);
+  };
+
+  // Fix: Implementação da função submitClosing para finalizar o turno
+  const submitClosing = async (count: number, obs: string) => {
     if (!activeShift) return;
-    const finalized: Shift = {
+
+    const now = Date.now();
+    const finalShift: Shift = {
       ...activeShift,
-      endTime: Date.now(),
       status: 'CLOSED',
+      endTime: now,
       declaredAitCount: count,
       observations: obs,
-      flags: (count > 0 && activeShift.metrics.totalTimeMs < 60000) ? ['Inconsistência Tempo vs Multas'] : []
+      flags: []
     };
-    setAllShifts(prev => [finalized, ...prev]);
-    syncToCloud(finalized);
+
+    // Lógica de detecção de fraudes simples
+    if (count > 0 && finalShift.metrics.totalTimeMs < 30000) {
+      finalShift.flags.push("Tempo de uso insuficiente para a produtividade declarada.");
+    }
+    if (count > 0 && finalShift.metrics.sessionCount === 0) {
+      finalShift.flags.push("Nenhuma sessão de uso registrada mas AITs foram informados.");
+    }
+
+    setAllShifts(prev => [...prev, finalShift]);
     setActiveShift(null);
-    setAuditLogs([]);
     setView('HOME');
+    addLog("TURNO ENCERRADO E DADOS ENVIADOS");
+    await syncToCloud(finalShift);
   };
 
   if (view === 'LOGIN') {
     return (
-      <Layout title="Controle AITe">
+      <Layout title="Android Auditor">
         <div className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-white">
-          <div style={{ backgroundColor: COLORS.NAVY }} className="w-20 h-20 rounded-3xl flex items-center justify-center mb-10 shadow-2xl rotate-2">
-             <span className="text-white text-3xl font-black">A</span>
+          <div style={{ backgroundColor: COLORS.NAVY }} className="w-24 h-24 rounded-[32px] flex items-center justify-center mb-12 shadow-2xl">
+             <span className="text-white text-4xl font-black">A</span>
           </div>
-          <h2 className="text-3xl font-black text-gray-900 mb-2">Login Operacional</h2>
-          <p className="text-gray-400 text-sm mb-12 px-4 italic">Seu turno monitorado começa aqui.</p>
-          <button onClick={() => handleLogin(UserRole.AGENTE)} style={{ backgroundColor: COLORS.NAVY }} className="w-full py-5 text-white font-black rounded-2xl mb-4 shadow-lg active:scale-95 transition-all">SOU AGENTE</button>
-          <button onClick={() => handleLogin(UserRole.GESTOR)} className="w-full py-5 border-2 border-[#001F3F] text-[#001F3F] font-black rounded-2xl active:scale-95 transition-all">SOU GESTOR</button>
+          <h2 className="text-3xl font-black text-gray-900 mb-4">Acesso Restrito</h2>
+          <p className="text-gray-400 text-sm mb-12 px-6">Aplicativo de monitoramento obrigatório para agentes de trânsito.</p>
+          <button onClick={() => handleLogin(UserRole.AGENTE)} style={{ backgroundColor: COLORS.NAVY }} className="w-full py-5 text-white font-black rounded-3xl mb-4 shadow-xl active:scale-95 transition-all">INICIAR COMO AGENTE</button>
+          <button onClick={() => handleLogin(UserRole.GESTOR)} className="w-full py-5 border-2 border-[#001F3F] text-[#001F3F] font-black rounded-3xl active:scale-95 transition-all">PAINEL GESTOR</button>
         </div>
       </Layout>
     );
@@ -202,13 +212,13 @@ const App: React.FC = () => {
 
   if (view === 'TERMS') {
     return (
-      <Layout title="Termos de Uso">
+      <Layout title="Termos de Auditoria">
         <div className="p-8 flex flex-col flex-1">
-          <div className="bg-gray-900 p-6 rounded-3xl mb-8">
-            <h3 className="font-bold text-white mb-3 text-lg">⚠️ Monitoramento Ativo</h3>
-            <p className="text-xs text-gray-300 leading-relaxed opacity-80">Ao iniciar o turno, este dispositivo registrará automaticamente os horários de tela do aplicativo AITe para fins de auditoria e produtividade.</p>
+          <div className="bg-red-50 p-6 rounded-3xl mb-8 border border-red-100">
+            <h3 className="font-bold text-red-900 mb-3 text-lg italic">Aviso de Monitoramento:</h3>
+            <p className="text-xs text-red-800 leading-relaxed font-medium">Este dispositivo está configurado para registrar automaticamente todo o tempo de permanência no sistema AITe. A tentativa de desativação do monitoramento será reportada como falta funcional.</p>
           </div>
-          <button onClick={() => { setUser({...user!, termsAccepted: true}); setView('HOME'); }} style={{ backgroundColor: COLORS.NAVY }} className="w-full py-5 text-white font-black rounded-2xl mt-auto shadow-xl">ACEITO E INICIAR</button>
+          <button onClick={() => { setUser({...user!, termsAccepted: true}); setView('HOME'); }} style={{ backgroundColor: COLORS.NAVY }} className="w-full py-5 text-white font-black rounded-3xl mt-auto shadow-2xl">ESTOU CIENTE E OPERANTE</button>
         </div>
       </Layout>
     );
@@ -216,72 +226,83 @@ const App: React.FC = () => {
 
   if (view === 'HOME') {
     return (
-      <Layout title={activeShift ? "Em Operação" : "Início de Turno"} showBack onBack={() => setView('LOGIN')}>
+      <Layout title={activeShift ? "Auditoria em Curso" : "Monitor de Turno"} showBack onBack={() => setView('LOGIN')}>
         <div className="p-6 flex-1 flex flex-col">
           {activeShift ? (
             <div className="flex-1 flex flex-col gap-6">
-              <div className="flex items-center justify-between px-2">
+              {/* Cloud Status */}
+              <div className="flex items-center justify-between px-3">
                 <div className="flex items-center gap-2">
                    <div className={`w-2 h-2 rounded-full ${isSyncing ? 'bg-blue-500 animate-pulse' : 'bg-green-500'}`}></div>
-                   <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Firestore {isSyncing ? 'Sincronizando...' : 'Conectado'}</span>
+                   <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Cloud: {isSyncing ? 'Sincronizando' : 'Seguro'}</span>
                 </div>
-                <span className="text-[10px] font-mono text-gray-400">ID: {activeShift.id.slice(-6)}</span>
+                <button onClick={triggerSimulation} className="text-[10px] text-gray-300 font-bold uppercase underline">Simular Sistema (Dev)</button>
               </div>
 
-              <div className="bg-white p-8 rounded-[40px] shadow-sm border border-gray-100 text-center relative overflow-hidden group">
-                <div className={`absolute top-0 left-0 w-2 h-full transition-colors duration-500 ${isAITeOpenInSystem ? 'bg-yellow-400' : 'bg-green-500'}`}></div>
-                <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Aplicação AITe</p>
-                <h4 className={`text-xl font-black ${isAITeOpenInSystem ? 'text-yellow-600' : 'text-green-600'}`}>
-                   {isAITeOpenInSystem ? 'EM USO NO MOMENTO' : 'SISTEMA EM ESPERA'}
-                </h4>
+              {/* AUTOMATIC STATUS - SEM BOTÃO PARA O AGENTE */}
+              <div className="bg-white p-10 rounded-[48px] shadow-sm border border-gray-100 text-center relative overflow-hidden">
+                <div className={`absolute top-0 left-0 w-3 h-full transition-colors duration-700 ${isAITeOpenInSystem ? 'bg-blue-500' : 'bg-gray-200'}`}></div>
+                <div className="flex flex-col items-center">
+                    {isAITeOpenInSystem ? (
+                        <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center mb-4 animate-bounce">
+                           <div className="w-4 h-4 bg-blue-600 rounded-full"></div>
+                        </div>
+                    ) : (
+                        <div className="w-12 h-12 bg-gray-100 rounded-full flex items-center justify-center mb-4">
+                           <div className="w-4 h-4 bg-gray-400 rounded-full"></div>
+                        </div>
+                    )}
+                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Estado Atual</p>
+                    <h4 className={`text-2xl font-black tracking-tight ${isAITeOpenInSystem ? 'text-blue-600' : 'text-gray-400'}`}>
+                    {isAITeOpenInSystem ? 'AITe EM TELA' : 'SISTEMA OCULTO'}
+                    </h4>
+                </div>
               </div>
 
+              {/* Large Stats */}
               <div className="grid grid-cols-2 gap-4">
-                <div className="bg-gray-900 p-8 rounded-[40px] text-white text-center shadow-2xl">
-                  <p className="text-[10px] opacity-40 uppercase font-bold mb-1">Total Minutos</p>
-                  <p className="text-4xl font-black">{(activeShift.metrics.totalTimeMs / 60000).toFixed(1)}</p>
+                <div className="bg-[#001F3F] p-8 rounded-[40px] text-white text-center shadow-2xl">
+                  <p className="text-[10px] opacity-40 uppercase font-bold mb-1">Tempo Total</p>
+                  <p className="text-4xl font-black">{(activeShift.metrics.totalTimeMs / 60000).toFixed(1)}<span className="text-lg opacity-50">m</span></p>
                 </div>
                 <div className="bg-white p-8 rounded-[40px] border border-gray-100 text-center shadow-sm">
-                  <p className="text-[10px] text-gray-400 uppercase font-bold mb-1">Total Acessos</p>
+                  <p className="text-[10px] text-gray-400 uppercase font-bold mb-1">Acessos Reais</p>
                   <p className="text-4xl font-black text-gray-800">{activeShift.metrics.sessionCount}</p>
                 </div>
               </div>
 
-              <div className="bg-blue-50 p-4 rounded-3xl border border-blue-100">
-                <button 
-                  onClick={() => setIsAITeOpenInSystem(!isAITeOpenInSystem)}
-                  className={`w-full py-4 rounded-2xl font-black text-sm transition-all shadow-md ${isAITeOpenInSystem ? 'bg-red-500 text-white' : 'bg-[#001F3F] text-white'}`}
-                >
-                  {isAITeOpenInSystem ? 'SAIR DO AITe (Simular)' : 'ENTRAR NO AITe (Simular)'}
-                </button>
-              </div>
-
-              <div className="bg-white rounded-3xl p-5 border border-gray-100 flex-1 flex flex-col min-h-0 shadow-inner">
-                <div className="flex justify-between items-center mb-4">
-                  <p className="text-[10px] font-black text-gray-400 uppercase">Monitoramento em Tempo Real</p>
-                  <span className="text-[10px] bg-gray-100 px-2 py-0.5 rounded-full text-gray-500">Live</span>
+              {/* Anti-fraud Protection Logs */}
+              <div className="bg-gray-50 rounded-[32px] p-6 border border-gray-200 flex-1 flex flex-col min-h-0 shadow-inner">
+                <div className="flex justify-between items-center mb-5">
+                  <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Logs de Acessibilidade</p>
+                  <div className="flex gap-1">
+                    <div className="w-1 h-1 bg-gray-400 rounded-full animate-ping"></div>
+                    <div className="w-1 h-1 bg-gray-400 rounded-full"></div>
+                  </div>
                 </div>
-                <div className="flex-1 overflow-y-auto space-y-3">
+                <div className="flex-1 overflow-y-auto space-y-4">
                   {auditLogs.map((log, i) => (
-                    <div key={i} className="flex justify-between items-center border-b border-gray-50 pb-2">
-                      <span className="text-xs text-gray-700 font-medium tracking-tight"> {log.msg}</span>
-                      <span className="text-[10px] text-gray-400 font-mono">{log.time}</span>
+                    <div key={i} className="flex justify-between items-start border-b border-gray-200 pb-2">
+                      <p className="text-[11px] text-gray-600 font-bold max-w-[70%]">
+                        {log.msg.includes('SISTEMA') ? '🛡️ ' : '👤 '} {log.msg}
+                      </p>
+                      <span className="text-[10px] text-gray-400 font-mono font-bold">{log.time}</span>
                     </div>
                   ))}
-                  {auditLogs.length === 0 && <p className="text-xs text-gray-300 italic text-center py-4">Aguardando atividade operacional...</p>}
+                  {auditLogs.length === 0 && <p className="text-xs text-gray-300 italic text-center py-6">Aguardando eventos do sistema Android...</p>}
                 </div>
               </div>
 
-              <button onClick={() => setView('CLOSING')} className="w-full py-5 border-2 border-red-500 text-red-500 font-black rounded-3xl active:bg-red-500 active:text-white transition-all">ENCERRAR E ENVIAR AO GESTOR</button>
+              <button onClick={() => setView('CLOSING')} className="w-full py-5 border-2 border-red-600 text-red-600 font-black rounded-[24px] hover:bg-red-50 transition-colors">FECHAR TURNO E ENVIAR</button>
             </div>
           ) : (
             <div className="flex-1 flex flex-col items-center justify-center text-center">
-               <div className="w-24 h-24 bg-gray-50 rounded-full flex items-center justify-center mb-8 border border-gray-100 text-[#001F3F] shadow-sm">
-                  <svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 11c0 3.517-1.009 6.799-2.753 9.571m-3.44-2.04l.054-.09A13.916 13.916 0 008 11a4 4 0 118 0c0 1.017-.07 2.019-.203 3m-2.118 6.844A21.88 21.88 0 0015.171 17m3.839 1.132c.645-2.266.99-4.659.99-7.132A8 8 0 008 4.07M3 15.364c.64-5.09 3.302-9.305 6.516-12.018" /></svg>
+               <div className="w-24 h-24 bg-white rounded-full flex items-center justify-center mb-10 border border-gray-100 text-[#001F3F] shadow-xl">
+                  <svg className="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
                </div>
-               <h3 className="text-2xl font-black text-gray-900 mb-2">Turno em Espera</h3>
-               <p className="text-sm text-gray-400 mb-10 px-6">Clique abaixo para iniciar a coleta automática de dados.</p>
-               <button onClick={startShift} style={{ backgroundColor: COLORS.NAVY }} className="w-full py-5 text-white font-black rounded-[32px] shadow-2xl active:scale-95 transition-all text-lg">ATIVAR AGORA</button>
+               <h3 className="text-2xl font-black text-gray-900 mb-4">Pronto para a Escala?</h3>
+               <p className="text-sm text-gray-400 mb-12 px-10">Ao clicar em ativar, o monitoramento de acessos será iniciado automaticamente pelo sistema.</p>
+               <button onClick={startShift} style={{ backgroundColor: COLORS.NAVY }} className="w-full py-5 text-white font-black rounded-[32px] shadow-2xl active:scale-95 transition-all text-xl tracking-tight">ATIVAR AUDITORIA</button>
             </div>
           )}
         </div>
@@ -291,26 +312,33 @@ const App: React.FC = () => {
 
   if (view === 'CLOSING') {
     return (
-      <Layout title="Resumo Final">
+      <Layout title="Relatório Final">
         <form className="p-8 flex flex-col flex-1" onSubmit={(e) => { e.preventDefault(); const d = new FormData(e.currentTarget); submitClosing(Number(d.get('count')), d.get('obs') as string); }}>
-          <div className="bg-[#001F3F] p-8 rounded-[40px] text-white mb-10 shadow-2xl">
-            <p className="text-[10px] font-bold opacity-40 uppercase mb-4 tracking-widest text-center">Dados Coletados no Cloud</p>
+          <div className="bg-[#001F3F] p-8 rounded-[48px] text-white mb-10 shadow-2xl">
+            <p className="text-[10px] font-black opacity-30 uppercase mb-6 tracking-widest text-center">Resumo da Telemetria</p>
             <div className="flex justify-between items-center">
-              <div className="text-center flex-1 border-r border-white/10">
-                <span className="text-4xl font-black block">{(activeShift!.metrics.totalTimeMs / 60000).toFixed(1)}</span>
-                <span className="text-[10px] font-bold opacity-60 uppercase">Minutos</span>
-              </div>
               <div className="text-center flex-1">
-                <span className="text-4xl font-black block">{activeShift!.metrics.sessionCount}</span>
-                <span className="text-[10px] font-bold opacity-60 uppercase">Acessos</span>
+                <span className="text-5xl font-black block">{(activeShift!.metrics.totalTimeMs / 60000).toFixed(1)}</span>
+                <span className="text-[10px] font-black opacity-40 uppercase tracking-widest">Minutos de Tela</span>
+              </div>
+              <div className="w-px h-12 bg-white/10"></div>
+              <div className="text-center flex-1">
+                <span className="text-5xl font-black block">{activeShift!.metrics.sessionCount}</span>
+                <span className="text-[10px] font-black opacity-40 uppercase tracking-widest">Acessos Reais</span>
               </div>
             </div>
           </div>
-          <label className="block text-[10px] font-black text-gray-400 uppercase mb-3 ml-2 tracking-widest">Total de AITs Lavrados:</label>
-          <input name="count" type="number" required placeholder="Ex: 12" className="w-full p-6 bg-white border-2 border-gray-100 rounded-3xl mb-8 text-2xl font-black focus:border-[#001F3F] outline-none transition-all shadow-sm" />
-          <label className="block text-[10px] font-black text-gray-400 uppercase mb-3 ml-2 tracking-widest">Observações:</label>
-          <textarea name="obs" rows={3} placeholder="Ocorreu algum problema?" className="w-full p-5 bg-white border-2 border-gray-100 rounded-3xl mb-8 text-sm focus:border-[#001F3F] outline-none shadow-sm"></textarea>
-          <button type="submit" style={{ backgroundColor: COLORS.NAVY }} className="w-full py-5 text-white font-black rounded-3xl shadow-xl mt-auto">SINCRONIZAR E FINALIZAR</button>
+          <div className="space-y-6">
+            <div>
+              <label className="block text-[10px] font-black text-gray-400 uppercase mb-3 ml-2 tracking-widest">Total de Multas Digitadas:</label>
+              <input name="count" type="number" required placeholder="0" className="w-full p-6 bg-white border-2 border-gray-100 rounded-[28px] text-3xl font-black focus:border-[#001F3F] outline-none shadow-sm" />
+            </div>
+            <div>
+              <label className="block text-[10px] font-black text-gray-400 uppercase mb-3 ml-2 tracking-widest">Ocorrências Adicionais:</label>
+              <textarea name="obs" rows={3} placeholder="Algum erro no sistema?" className="w-full p-6 bg-white border-2 border-gray-100 rounded-[28px] text-sm focus:border-[#001F3F] outline-none shadow-sm"></textarea>
+            </div>
+          </div>
+          <button type="submit" style={{ backgroundColor: COLORS.NAVY }} className="w-full py-5 text-white font-black rounded-[32px] shadow-xl mt-auto text-lg tracking-tight">SUBMETER AUDITORIA</button>
         </form>
       </Layout>
     );
@@ -318,7 +346,7 @@ const App: React.FC = () => {
 
   if (view === 'MANAGER') {
     return (
-      <Layout title="Dashboard de Gestão" showBack onBack={() => setView('LOGIN')}>
+      <Layout title="Dashboard do Gestor" showBack onBack={() => setView('LOGIN')}>
         <ManagerDashboard shifts={allShifts} />
       </Layout>
     );

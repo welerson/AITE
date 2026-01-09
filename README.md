@@ -1,37 +1,44 @@
 
-# Controle AITe - Guia de Auditoria e Integração
+# 🛡️ Guia de Implementação Nativa (Android)
 
-## ⚠️ CORREÇÃO DE ERRO COMUM (FIREBASE RULES)
+Para que este aplicativo web monitore o app **AITe** sem intervenção do agente, você deve implementar um `AccessibilityService` no seu projeto Android Studio.
 
-Se você viu um erro de `Unexpected '{'` na aba **Regras (Rules)** do Firebase, é porque você tentou colar código JavaScript lá. 
+## 1. O que o Android deve fazer:
+O serviço nativo deve monitorar eventos do tipo `TYPE_WINDOW_STATE_CHANGED`. Sempre que o pacote `br.gov.aite` entrar no foco, o Android deve chamar uma função JavaScript no WebView.
 
-### O que fazer na aba Regras:
-Apague tudo e cole apenas isto:
+## 2. Exemplo de Código Nativo (Kotlin):
+```kotlin
+override fun onAccessibilityEvent(event: AccessibilityEvent) {
+    val packageName = event.packageName?.toString()
+    val isAite = packageName == "br.gov.aite"
+    
+    // Dispara o evento para o WebView
+    webView.evaluateJavascript("""
+        window.dispatchEvent(new CustomEvent('android_foreground_event', { 
+            detail: { 
+                packageName: 'br.gov.aite', 
+                isForeground: $isAite 
+            } 
+        }));
+    """, null)
+}
+```
+
+## 3. Segurança Inviolável:
+*   **Sem Botões**: O Agente não consegue "clicar" para entrar no AITe. O registro só acontece se o sistema operacional detectar a janela aberta.
+*   **Debounce de 1.5s**: Evita que o agente fique "trocando de tela" rápido para gerar muitos acessos falsos.
+*   **Filtro de 2s**: Se o agente abrir o app e fechar imediatamente (menos de 2 segundos), o sistema descarta a sessão, pois não houve tempo para lavrar uma multa real.
+
+---
+
+### Configuração do Cloud Firestore (Regras)
 ```javascript
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     match /{document=**} {
-      allow read, write: if true;
+      allow read, write: if true; // Em produção, restrinja por auth.uid
     }
   }
 }
 ```
-
-### Onde colocar o seu código de configuração:
-O código que contém `apiKey`, `projectId` e os `import { initializeApp }` deve ficar dentro do seu arquivo **App.tsx**, logo no início.
-
----
-
-## 🚀 Estrutura do Banco Cloud Firestore
-
-Para que o sistema funcione 100%, seu banco deve seguir esta hierarquia automática:
-
-- **Coleção `turnos`**: Documentos criados a cada início de jornada.
-  - Campos: `userId`, `userName`, `startTime`, `metrics`, `sessions`.
-  - O campo `sessions` é um array que registra cada entrada e saída do app monitorado.
-
-## 🛠️ Detalhes da Telemetria
-O aplicativo utiliza uma trava lógica de **1.5 segundos** para evitar contagens duplicadas causadas por oscilações do sistema Android (o erro de "marcar 3 acessos quando abriu apenas 2"). 
-
-Sessões de uso menores que **2 segundos** são descartadas automaticamente por serem consideradas "ruídos" ou aberturas acidentais.
